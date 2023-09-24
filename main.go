@@ -82,6 +82,17 @@ func generateUpdateSQL(e OplogEntry) (string, error) {
 		strings.Join(where, " AND ")), nil
 }
 
+func generateDeleteSQL(e OplogEntry) (string, error) {
+	columns := make([]string, 0, len(e.O))
+	for n, v := range e.O {
+		columns = append(columns, fmt.Sprintf("%s = %s", n, getColumnValue(v)))
+	}
+
+	sort.Strings(columns)
+
+	return fmt.Sprintf("DELETE FROM %s WHERE %s;", e.Ns, strings.Join(columns, " AND ")), nil
+}
+
 func ConvertToSQL(oplog string) (string, error) {
 	var entry OplogEntry
 	if err := json.Unmarshal([]byte(oplog), &entry); err != nil {
@@ -93,6 +104,8 @@ func ConvertToSQL(oplog string) (string, error) {
 		return generateInsertSQL(entry)
 	case "u":
 		return generateUpdateSQL(entry)
+	case "d":
+		return generateDeleteSQL(entry)
 	}
 
 	return "", fmt.Errorf("invalid oplog")
