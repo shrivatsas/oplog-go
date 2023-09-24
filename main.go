@@ -14,6 +14,15 @@ type OplogEntry struct {
 	O2 map[string]interface{} `json:"o2"`
 }
 
+func getColumnNames(O map[string]interface{}) []string {
+	columns := make([]string, 0, len(O))
+	for c := range O {
+		columns = append(columns, c)
+	}
+	sort.Strings(columns)
+	return columns
+}
+
 func getColumnValue(val interface{}) string {
 	switch val.(type) {
 	case string:
@@ -29,13 +38,42 @@ func getColumnValue(val interface{}) string {
 	}
 }
 
-func generateInsertSQL(e OplogEntry) (string, error) {
-	columns := make([]string, 0, len(e.O))
-	for c := range e.O {
-		columns = append(columns, c)
+func getColumnDataType(name string, val interface{}) string {
+	dtype := ""
+	if name == "_id" {
+		dtype = " PRIMARY KEY"
+	}
+	switch val.(type) {
+	case int, int8, int16, int32, int64:
+		return "INTEGER" + dtype
+	case float32, float64:
+		return "FLOAT" + dtype
+	case bool:
+		return "BOOLEAN" + dtype
+	default:
+		return "VARCHAR(255)" + dtype
+	}
+}
+
+func generateCreateSchemaSQL(e OplogEntry) (string, error) {
+	nsParts := strings.Split(e.Ns, ".")
+	return fmt.Sprintf("CREATE SCHEMA %s;", nsParts[0]), nil
+}
+
+func generateCreateTableSQL(e OplogEntry) (string, error) {
+	columns := getColumnNames(e.O)
+	cs := make([]string, 0, len(columns))
+	for _, c := range columns {
+		v := e.O[c]
+		dtype := getColumnDataType(c, v)
+		cs = append(cs, fmt.Sprintf("%s %s", c, dtype))
 	}
 
-	sort.Strings(columns)
+	return fmt.Sprintf("CREATE TABLE %s (%s);", e.Ns, strings.Join(cs, ", ")), nil
+}
+
+func generateInsertSQL(e OplogEntry) (string, error) {
+	columns := getColumnNames(e.O)
 	values := make([]string, 0, len(e.O))
 	for _, c := range columns {
 		values = append(values, getColumnValue(e.O[c]))
@@ -93,20 +131,43 @@ func generateDeleteSQL(e OplogEntry) (string, error) {
 	return fmt.Sprintf("DELETE FROM %s WHERE %s;", e.Ns, strings.Join(columns, " AND ")), nil
 }
 
-func ConvertToSQL(oplog string) (string, error) {
+func ConvertToSQL(oplog string) ([]string, error) {
+	commands := []string{}
 	var entry OplogEntry
 	if err := json.Unmarshal([]byte(oplog), &entry); err != nil {
-		return "", err
+		return commands, err
 	}
 
 	switch entry.Op {
 	case "i":
-		return generateInsertSQL(entry)
+		c, err := generateCreateSchemaSQL(entry)
+		if err != nil {
+			return commands, err
+		}
+		commands = append(commands, c)
+		c, err = generateCreateTableSQL(entry)
+		if err != nil {
+			return commands, err
+		}
+		commands = append(commands, c)
+		c, err = generateInsertSQL(entry)
+		if err != nil {
+			return commands, err
+		}
+		commands = append(commands, c)
 	case "u":
-		return generateUpdateSQL(entry)
+		c, err := generateUpdateSQL(entry)
+		if err != nil {
+			return commands, err
+		}
+		commands = append(commands, c)
 	case "d":
-		return generateDeleteSQL(entry)
+		c, err := generateDeleteSQL(entry)
+		if err != nil {
+			return commands, err
+		}
+		commands = append(commands, c)
 	}
 
-	return "", fmt.Errorf("invalid oplog")
+	return commands, nil
 }

@@ -1,18 +1,21 @@
 package main
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestConvertToSQL(t *testing.T) {
 	tests := []struct {
 		name    string
 		oplog   string
-		want    string
+		want    []string
 		wantErr bool
 	}{
 		{
 			name:    "Empty Operation",
 			oplog:   "",
-			want:    "",
+			want:    []string{},
 			wantErr: true,
 		},
 		{
@@ -28,7 +31,10 @@ func TestConvertToSQL(t *testing.T) {
 				  "date_of_birth": "2000-01-30"
 				}
 			}`,
-			want:    "INSERT INTO test.student (_id, date_of_birth, is_graduated, name, roll_no) VALUES ('635b79e231d82a8ab1de863b', '2000-01-30', false, 'Selena Miller', 51);",
+			want: []string{
+				"CREATE SCHEMA test;",
+				"CREATE TABLE test.student (_id VARCHAR(255) PRIMARY KEY, date_of_birth VARCHAR(255), is_graduated BOOLEAN, name VARCHAR(255), roll_no FLOAT);",
+				"INSERT INTO test.student (_id, date_of_birth, is_graduated, name, roll_no) VALUES ('635b79e231d82a8ab1de863b', '2000-01-30', false, 'Selena Miller', 51);"},
 			wantErr: false,
 		},
 		{
@@ -48,7 +54,7 @@ func TestConvertToSQL(t *testing.T) {
 				   "_id": "635b79e231d82a8ab1de863b"
 				}
 			 }`,
-			want:    "UPDATE test.student SET is_graduated = true WHERE _id = '635b79e231d82a8ab1de863b';",
+			want:    []string{"UPDATE test.student SET is_graduated = true WHERE _id = '635b79e231d82a8ab1de863b';"},
 			wantErr: false,
 		},
 		{
@@ -68,7 +74,7 @@ func TestConvertToSQL(t *testing.T) {
 				   "_id": "635b79e231d82a8ab1de863b"
 				}
 			}`,
-			want:    "UPDATE test.student SET roll_no = NULL WHERE _id = '635b79e231d82a8ab1de863b';",
+			want:    []string{"UPDATE test.student SET roll_no = NULL WHERE _id = '635b79e231d82a8ab1de863b';"},
 			wantErr: false,
 		},
 		{
@@ -89,7 +95,7 @@ func TestConvertToSQL(t *testing.T) {
 				   "_id": "635b79e231d82a8ab1de863b"
 				}
 			 }`,
-			want:    "UPDATE test.student SET is_graduated = true, roll_no = 51 WHERE _id = '635b79e231d82a8ab1de863b';",
+			want:    []string{"UPDATE test.student SET is_graduated = true, roll_no = 51 WHERE _id = '635b79e231d82a8ab1de863b';"},
 			wantErr: false,
 		},
 		{
@@ -101,7 +107,7 @@ func TestConvertToSQL(t *testing.T) {
 				  "_id": "635b79e231d82a8ab1de863b"
 				}
 			  }`,
-			want:    "DELETE FROM test.student WHERE _id = '635b79e231d82a8ab1de863b';",
+			want:    []string{"DELETE FROM test.student WHERE _id = '635b79e231d82a8ab1de863b';"},
 			wantErr: false,
 		},
 	}
@@ -112,7 +118,7 @@ func TestConvertToSQL(t *testing.T) {
 				t.Errorf("ConvertToSQL() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ConvertToSQL() = %v, want %v", got, tt.want)
 			}
 		})
