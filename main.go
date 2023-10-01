@@ -55,12 +55,11 @@ func getColumnDataType(name string, val interface{}) string {
 	}
 }
 
-func generateCreateSchemaSQL(e OplogEntry) (string, error) {
-	nsParts := strings.Split(e.Ns, ".")
-	return fmt.Sprintf("CREATE SCHEMA %s;", nsParts[0]), nil
+func generateCreateSchemaSQL(schema string) string {
+	return fmt.Sprintf("CREATE SCHEMA %s;", schema)
 }
 
-func generateCreateTableSQL(e OplogEntry) (string, error) {
+func generateCreateTableSQL(e OplogEntry) string {
 	columns := getColumnNames(e.O)
 	cs := make([]string, 0, len(columns))
 	for _, c := range columns {
@@ -69,7 +68,7 @@ func generateCreateTableSQL(e OplogEntry) (string, error) {
 		cs = append(cs, fmt.Sprintf("%s %s", c, dtype))
 	}
 
-	return fmt.Sprintf("CREATE TABLE %s (%s);", e.Ns, strings.Join(cs, ", ")), nil
+	return fmt.Sprintf("CREATE TABLE %s (%s);", e.Ns, strings.Join(cs, ", "))
 }
 
 func generateInsertSQL(e OplogEntry) (string, error) {
@@ -131,26 +130,23 @@ func generateDeleteSQL(e OplogEntry) (string, error) {
 	return fmt.Sprintf("DELETE FROM %s WHERE %s;", e.Ns, strings.Join(columns, " AND ")), nil
 }
 
-func ConvertToSQL(oplog string) ([]string, error) {
+func generateSQL(entry OplogEntry, cacheMap map[string]bool) ([]string, error) {
 	commands := []string{}
-	var entry OplogEntry
-	if err := json.Unmarshal([]byte(oplog), &entry); err != nil {
-		return commands, err
-	}
 
 	switch entry.Op {
 	case "i":
-		c, err := generateCreateSchemaSQL(entry)
-		if err != nil {
-			return commands, err
+		nsParts := strings.Split(entry.Ns, ".")
+		if exists := cacheMap[nsParts[0]]; !exists {
+			commands = append(commands, generateCreateSchemaSQL(nsParts[0]))
+			cacheMap[nsParts[0]] = true
 		}
-		commands = append(commands, c)
-		c, err = generateCreateTableSQL(entry)
-		if err != nil {
-			return commands, err
+
+		if exists := cacheMap[entry.Ns]; !exists {
+			commands = append(commands, generateCreateTableSQL(entry))
+			cacheMap[entry.Ns] = true
 		}
-		commands = append(commands, c)
-		c, err = generateInsertSQL(entry)
+
+		c, err := generateInsertSQL(entry)
 		if err != nil {
 			return commands, err
 		}
@@ -167,6 +163,30 @@ func ConvertToSQL(oplog string) ([]string, error) {
 			return commands, err
 		}
 		commands = append(commands, c)
+	}
+
+	return commands, nil
+}
+
+func ConvertToSQL(oplog string) ([]string, error) {
+	commands := []string{}
+	var entries []OplogEntry
+	if err := json.Unmarshal([]byte(oplog), &entries); err != nil {
+		var entry OplogEntry
+		if err := json.Unmarshal([]byte(oplog), &entry); err != nil {
+			return commands, err
+		}
+
+		entries = append(entries, entry)
+	}
+
+	cacheMap := make(map[string]bool)
+	for _, entry := range entries {
+		innerSqls, err := generateSQL(entry, cacheMap)
+		if err != nil {
+			return []string{}, err
+		}
+		commands = append(commands, innerSqls...)
 	}
 
 	return commands, nil
