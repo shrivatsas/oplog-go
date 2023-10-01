@@ -59,12 +59,15 @@ func generateCreateSchemaSQL(schema string) string {
 	return fmt.Sprintf("CREATE SCHEMA %s;", schema)
 }
 
-func generateCreateTableSQL(e OplogEntry) string {
+func generateCreateTableSQL(e OplogEntry, cacheMap map[string]bool) string {
 	columns := getColumnNames(e.O)
 	cs := make([]string, 0, len(columns))
 	for _, c := range columns {
 		v := e.O[c]
 		dtype := getColumnDataType(c, v)
+
+		cacheKey := fmt.Sprintf("%s.%s", e.Ns, c)
+		cacheMap[cacheKey] = true
 		cs = append(cs, fmt.Sprintf("%s %s", c, dtype))
 	}
 
@@ -130,6 +133,34 @@ func generateDeleteSQL(e OplogEntry) (string, error) {
 	return fmt.Sprintf("DELETE FROM %s WHERE %s;", e.Ns, strings.Join(columns, " AND ")), nil
 }
 
+func alterTableRequired(e OplogEntry, cacheMap map[string]bool) bool {
+	columns := getColumnNames(e.O)
+	for _, c := range columns {
+		cacheKey := fmt.Sprintf("%s.%s", e.Ns, c)
+		if !cacheMap[cacheKey] {
+			return true
+		}
+	}
+	return false
+}
+
+func generateAlterTableSQL(e OplogEntry, cacheMap map[string]bool) string {
+	columns := getColumnNames(e.O)
+	alterCmd := fmt.Sprintf("ALTER TABLE %s ", e.Ns)
+	alterCols := make([]string, 0, len(columns))
+
+	for _, c := range columns {
+		cacheKey := fmt.Sprintf("%s.%s", e.Ns, c)
+		if !cacheMap[cacheKey] {
+			colType := getColumnDataType(c, e.O[c])
+			alterCols = append(alterCols, fmt.Sprintf("ADD COLUMN %s %s", c, colType))
+			cacheMap[cacheKey] = true
+		}
+	}
+
+	return alterCmd + strings.Join(alterCols, ", ") + ";"
+}
+
 func generateSQL(entry OplogEntry, cacheMap map[string]bool) ([]string, error) {
 	commands := []string{}
 
@@ -142,8 +173,10 @@ func generateSQL(entry OplogEntry, cacheMap map[string]bool) ([]string, error) {
 		}
 
 		if exists := cacheMap[entry.Ns]; !exists {
-			commands = append(commands, generateCreateTableSQL(entry))
+			commands = append(commands, generateCreateTableSQL(entry, cacheMap))
 			cacheMap[entry.Ns] = true
+		} else if alterTableRequired(entry, cacheMap) {
+			commands = append(commands, generateAlterTableSQL(entry, cacheMap))
 		}
 
 		c, err := generateInsertSQL(entry)
